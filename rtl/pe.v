@@ -28,7 +28,8 @@ module pe #(
     parameter ACC_W    = 32,
     parameter CFG_W    = 10,
     parameter PIPELINE = 1,
-    parameter GEN_CHECK = 1,     // 1 = residue self-check in silicon; 0 = plain MAC (PPA baseline)
+    parameter GEN_CHECK = 1,     // legacy umbrella knob; retained for compatibility
+    parameter PE_CHECK_EN = GEN_CHECK, // 1 = residue self-check in silicon; 0 = plain MAC (PPA baseline)
     parameter RESIDUE_MOD7 = 0   // 0 = mod-3 only (ABFT backstops multi-bit); 1 = +mod-7 ablation lane
 )(
     input  wire                  clk, rst_n,
@@ -187,8 +188,8 @@ module pe #(
     // the two per-PE operand reducers — the residue is carried, not recomputed. The
     // check is only armed for OP_MACB, so the mesh-operand case never reaches compare.
     // GEN_CHECK=0 strips this whole block -> plain MAC PE (reliability-off PPA
-    // baseline). GEN_CHECK=1 (default) keeps the in-cycle residue verification.
-    generate if (GEN_CHECK) begin : g_check
+    // baseline). PE_CHECK_EN=1 keeps the in-cycle residue verification.
+    generate if (PE_CHECK_EN) begin : g_check
     wire [1:0] res_a_d = sel_src_a ? sram_res : res_a_in;
     wire [1:0] res_b_d = sel_src_b ? sram_res : res_b_in;
     wire [1:0] res_out;

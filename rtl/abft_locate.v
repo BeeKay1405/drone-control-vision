@@ -35,47 +35,74 @@ module abft_locate #(
     input  wire [COLS-1:0]       mac_err_row,  // sticky residue flags, this row
     output wire                  err_present,  // an error exists in this row
     output wire                  located,      // location resolved (fast or net)
-    output wire [1:0]            loc,          // which column
+    output wire [((COLS <= 1) ? 1 : $clog2(COLS))-1:0] loc, // which column
     output wire                  used_fallback,// 0 = residue gave loc, 1 = checksums did
     output wire                  ambig,        // checksum loc ambiguous (see header)
     output wire [ACC_W-1:0]      err_val,      // e
     output wire [ACC_W-1:0]      c_fixed       // corrected value for column loc
 );
-    wire [ACC_W-1:0] c0 = c_obs_flat[0*ACC_W +: ACC_W];
-    wire [ACC_W-1:0] c1 = c_obs_flat[1*ACC_W +: ACC_W];
-    wire [ACC_W-1:0] c2 = c_obs_flat[2*ACC_W +: ACC_W];
-    wire [ACC_W-1:0] c3 = c_obs_flat[3*ACC_W +: ACC_W];
+    localparam LOC_W   = (COLS <= 1) ? 1 : $clog2(COLS);
+    localparam COUNT_W = (COLS <= 1) ? 1 : $clog2(COLS + 1);
 
-    wire [ACC_W-1:0] D0 = (c0 + c1 + c2 + c3) - cksum;
-    wire [ACC_W-1:0] D1 = (c0 + (c1 << 1) + (c2 << 2) + (c3 << 3)) - cksum_w;
+    integer j;
+    reg [ACC_W-1:0] sum_plain, sum_weighted;
+    reg [COUNT_W-1:0] fast_count, match_count;
+    reg [LOC_W-1:0] loc_fast, loc_net, loc_sel;
+    reg [ACC_W-1:0] c_at_loc;
+    reg fast, unique_m;
+
+    always @(*) begin
+        sum_plain    = {ACC_W{1'b0}};
+        sum_weighted = {ACC_W{1'b0}};
+        fast_count   = {COUNT_W{1'b0}};
+        match_count  = {COUNT_W{1'b0}};
+        loc_fast     = {LOC_W{1'b0}};
+        loc_net      = {LOC_W{1'b0}};
+        c_at_loc     = {ACC_W{1'b0}};
+
+        for (j = 0; j < COLS; j = j + 1) begin
+            sum_plain    = sum_plain + c_obs_flat[j*ACC_W +: ACC_W];
+            sum_weighted = sum_weighted + (c_obs_flat[j*ACC_W +: ACC_W] << j);
+
+            if (mac_err_row[j]) begin
+                fast_count = fast_count + {{(COUNT_W-1){1'b0}}, 1'b1};
+                loc_fast   = j[LOC_W-1:0];
+            end
+        end
+    end
+
+    wire [ACC_W-1:0] D0 = sum_plain - cksum;
+    wire [ACC_W-1:0] D1 = sum_weighted - cksum_w;
 
     assign err_present = |D0;
     assign err_val     = D0;
 
     // ---- fast path: residue flags, one-hot ----
-    wire fast = (mac_err_row == 4'b0001) | (mac_err_row == 4'b0010) |
-                (mac_err_row == 4'b0100) | (mac_err_row == 4'b1000);
-    wire [1:0] loc_fast = mac_err_row[1] ? 2'd1 :
-                          mac_err_row[2] ? 2'd2 :
-                          mac_err_row[3] ? 2'd3 : 2'd0;
+    always @(*) begin
+        match_count = {COUNT_W{1'b0}};
+        loc_net     = {LOC_W{1'b0}};
+        for (j = 0; j < COLS; j = j + 1) begin
+            if (D1 == (D0 << j)) begin
+                match_count = match_count + {{(COUNT_W-1){1'b0}}, 1'b1};
+                loc_net     = j[LOC_W-1:0];
+            end
+        end
+    end
 
-    // ---- safety net: which column weight explains D1? ----
-    wire m0 = (D1 == D0);
-    wire m1 = (D1 == (D0 << 1));
-    wire m2 = (D1 == (D0 << 2));
-    wire m3 = (D1 == (D0 << 3));
-    wire [2:0] nmatch = {2'b00, m0} + {2'b00, m1} + {2'b00, m2} + {2'b00, m3};
-    wire       unique_m = (nmatch == 3'd1);
-    wire [1:0] loc_net  = m1 ? 2'd1 : m2 ? 2'd2 : m3 ? 2'd3 : 2'd0;
+    always @(*) begin
+        fast     = (fast_count == {{(COUNT_W-1){1'b0}}, 1'b1});
+        unique_m = (match_count == {{(COUNT_W-1){1'b0}}, 1'b1});
+        loc_sel  = fast ? loc_fast : loc_net;
+        c_at_loc = {ACC_W{1'b0}};
+        for (j = 0; j < COLS; j = j + 1)
+            if (loc_sel == j[LOC_W-1:0])
+                c_at_loc = c_obs_flat[j*ACC_W +: ACC_W];
+    end
 
     assign used_fallback = err_present & ~fast;
     assign located = err_present & (fast | unique_m);
     assign ambig   = err_present & ~fast & ~unique_m;
-    assign loc     = fast ? loc_fast : loc_net;
-
-    wire [ACC_W-1:0] c_at_loc = (loc == 2'd0) ? c0 :
-                                (loc == 2'd1) ? c1 :
-                                (loc == 2'd2) ? c2 : c3;
+    assign loc     = loc_sel;
     assign c_fixed = c_at_loc - D0;
 endmodule
 

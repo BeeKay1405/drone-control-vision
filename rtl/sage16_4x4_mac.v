@@ -32,7 +32,9 @@ module sage16_4x4_mac #(
     parameter ACC_W    = 32,
     parameter CFG_W    = 10,
     parameter PIPELINE = 1,
-    parameter GEN_CHECK = 1,           // 1 = reliability in silicon; 0 = plain fabric (PPA baseline)
+    parameter GEN_CHECK = 1,           // legacy umbrella knob; retained for compatibility
+    parameter RAIL_CHECK_EN = GEN_CHECK,
+    parameter PE_CHECK_EN   = GEN_CHECK,
     parameter RESIDUE_MOD7 = 0,        // threaded to every PE (0 = mod-3 only)
     parameter SRAM_AW  = 8,            // 256 words
     parameter SRAM_DW  = 32
@@ -88,7 +90,7 @@ module sage16_4x4_mac #(
     generate
         for (gr = 0; gr < ROWS; gr = gr+1) begin : wres
             // residue of the driver value (combinational; pruned by synthesis
-            // when GEN_CHECK=0 leaves it unused — kept ungated so the reducer's
+            // when both checkers are off leaves it unused — kept ungated so the reducer's
             // output net connects cleanly across generate scopes).
             mod3_reduce #(.W(DATA_W)) u_m3
                 (.x(ext_in_west[gr*DATA_W +: DATA_W]), .r(res_w_src[gr]));
@@ -145,7 +147,7 @@ module sage16_4x4_mac #(
             mod3_reduce #(.W(DATA_W)) u_m3_wtap (.x(west_rail[r]),  .r(res_w_tap));
             mod3_reduce #(.W(DATA_W)) u_m3_ntap (.x(north_rail[c]), .r(res_n_tap));
             // only the syndrome FFs + flag outputs are gated (the reliability cost)
-            if (GEN_CHECK) begin : g_railchk
+            if (RAIL_CHECK_EN) begin : g_railchk
                 reg rerr_w_q, rerr_n_q;
                 always @(posedge clk or negedge rst_n)
                     if (!rst_n) begin rerr_w_q <= 1'b0; rerr_n_q <= 1'b0; end
@@ -204,6 +206,7 @@ module sage16_4x4_mac #(
                 .CFG_W       (CFG_W),
                 .PIPELINE    (PIPELINE),
                 .GEN_CHECK   (GEN_CHECK),
+                .PE_CHECK_EN (PE_CHECK_EN),
                 .RESIDUE_MOD7(RESIDUE_MOD7)
             ) u_pe (
                 .clk        (clk),

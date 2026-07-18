@@ -51,17 +51,25 @@ module abft_checksum #(
     output wire [ROWS*ACC_W-1:0]      cksum_flat,   // S_i  (plain row checksums)
     output wire [ROWS*ACC_W-1:0]      cksum_w_flat  // S'_i (weighted, 2^j)
 );
-    // ---- the checksum rails: one adder (tree) each, shared by all rows ----
-    // beta  = SUM_j north_j           (<= 4*(2^16-1), fits 18 bits)
-    // beta' = SUM_j (north_j << j)    (<= 15*(2^16-1), fits 20 bits)
-    wire [DATA_W-1:0] n0 = ext_in_north[0*DATA_W +: DATA_W];
-    wire [DATA_W-1:0] n1 = ext_in_north[1*DATA_W +: DATA_W];
-    wire [DATA_W-1:0] n2 = ext_in_north[2*DATA_W +: DATA_W];
-    wire [DATA_W-1:0] n3 = ext_in_north[3*DATA_W +: DATA_W];
+    localparam BETA_W  = DATA_W + ((COLS <= 1) ? 1 : $clog2(COLS));
+    localparam BETAW_W = DATA_W + COLS;
 
-    wire [DATA_W+1:0] beta   = n0 + n1 + n2 + n3;
-    wire [DATA_W+3:0] beta_w = {4'b0, n0} + {3'b0, n1, 1'b0}
-                             + {2'b0, n2, 2'b0} + {1'b0, n3, 3'b0};
+    // ---- the checksum rails: one adder (tree) each, shared by all rows ----
+    // beta  = SUM_j north_j
+    // beta' = SUM_j (north_j << j)
+    integer j;
+    reg [BETA_W-1:0]  beta;
+    reg [BETAW_W-1:0] beta_w;
+    reg [BETAW_W-1:0] north_ext;
+    always @(*) begin
+        beta   = {BETA_W{1'b0}};
+        beta_w = {BETAW_W{1'b0}};
+        for (j = 0; j < COLS; j = j + 1) begin
+            north_ext = {{(BETAW_W-DATA_W){1'b0}}, ext_in_north[j*DATA_W +: DATA_W]};
+            beta   = beta   + north_ext[BETA_W-1:0];
+            beta_w = beta_w + (north_ext << j);
+        end
+    end
 
     // ---- per-row checksum PE: MAC west_i * beta (and * beta'), mod 2^ACC_W ----
     genvar r;
@@ -70,8 +78,8 @@ module abft_checksum #(
 
         // stage 1: operand regs (mirrors pe.v mul_a_q/mul_b_q)
         reg [DATA_W-1:0]  a_q;
-        reg [DATA_W+1:0]  b_q;
-        reg [DATA_W+3:0]  bw_q;
+        reg [BETA_W-1:0]  b_q;
+        reg [BETAW_W-1:0] bw_q;
         always @(posedge clk) begin
             a_q  <= a_in;
             b_q  <= beta;
