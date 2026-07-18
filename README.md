@@ -167,5 +167,3 @@ w(0x210,0); w(0x21C,0)
   GEMM) and batched AXI transfers toward microsecond-scale latency.
 - IMU (MPU6050) over PL AXI-IIC is detected at `0x68` but not yet wired into the loop.
 
-## See also
-- `HANDOFF.md` — full change log, build-collision story, and integration boundary notes.
